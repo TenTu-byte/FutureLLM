@@ -1,0 +1,64 @@
+##提取hidden state
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+python -u transformer_inference_dp_save_all_steps.py \
+  --model_name_or_path '/data1/tutengyao/models/DeepSeek-R1-Distill-Qwen-7B' \
+  --dataset_dir './Data/' \
+  --dataset 'Math_Regress' \
+  --output_path './outputs' \
+  --num_gpus 8 \
+  --trust_remote_code \
+  --save_step_hs \
+  --max_new_tokens 16384 \
+  --hs_device auto
+##训练回归器并保存
+python train_remain_length_reg_auto_layer.py \
+  --folder "./outputs/DeepSeek-R1-Distill-Qwen-1.5B/Math_Regress" \
+  --k -1 \
+  --layer -1 \
+  --norm_mode log
+
+##在验证集上找点（触发次数和触发阈值）
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+python -u grid_search_regressor.py \
+  --inference_py ./transformer_inference_regressor.py \
+  --merge_py ./merge_shards.py \
+  --check_py ./check.py \
+  --model_name_or_path "/data1/tutengyao/models/DeepSeek-R1-Distill-Qwen-1.5B" \
+  --dataset_dir "./Data" \
+  --dataset "Math_Val" \
+  --num_gpus 8 \
+  --trust_remote_code \
+  --max_new_tokens 16384 \
+  --hs_device auto \
+  --reg "./outputs/DeepSeek-R1-Distill-Qwen-1.5B/Math_Regress/remain_reg/remain_reg.joblib" \
+  --reg_meta "./outputs/DeepSeek-R1-Distill-Qwen-1.5B/Math_Regress/remain_reg/remain_reg_meta.json" \
+  --thresholds "0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9" \
+  --consecutives "1,2,3" \
+  --grid_root "./outputs_reg_grid" \
+  --run_tag "val_grid_v1"
+
+##和验证集的baseline做对比
+python merge_shards.py \
+  --dir ./outputs/DeepSeek-R1-Distill-Qwen-1.5B/Math_Val \
+  --base 'results'
+python check.py \
+    --model_name_or_path '/data1/tutengyao/models/DeepSeek-R1-Distill-Qwen-1.5B' \
+    --data_name "Math_Val" \
+    --generation_path "./outputs/DeepSeek-R1-Distill-Qwen-1.5B/Math_Val/results.merged.jsonl"  
+
+##在验证集找到一个合适的point，在测试集上运行
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+python -u transformer_inference_regressor.py \
+  --model_name_or_path "/data1/tutengyao/models/DeepSeek-R1-Distill-Qwen-1.5B" \
+  --dataset_dir "./Data" \
+  --dataset "Math_Math500" \
+  --output_path "./outputs_reg" \
+  --num_gpus 8 \
+  --trust_remote_code \
+  --max_new_tokens 16384 \
+  --hs_device auto \
+  --reg "./outputs/DeepSeek-R1-Distill-Qwen-1.5B/Math_Regress/remain_reg/remain_reg.joblib" \
+  --reg_meta "./outputs/DeepSeek-R1-Distill-Qwen-1.5B/Math_Regress/remain_reg/remain_reg_meta.json" \
+  --reg_threshold 0.9 \
+  --consecutive_n 1
+
